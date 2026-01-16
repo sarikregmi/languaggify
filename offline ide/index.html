@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Offline IDE</title>
+
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #1e1e1e;
+  color: #ccc;
+}
+
+/* Top bar */
+#top {
+  height: 40px;
+  background: #252526;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  gap: 6px;
+  font-size: 12px;           /* 🔽 smaller text */
+  user-select: none;
+}
+
+/* Shared style */
+#top button,
+#top select {
+  background: transparent;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  color: #ccc;
+  font: inherit;
+  padding: 4px 6px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+/* Hover feedback */
+#top button:hover,
+#top select:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+  opacity: 1;
+}
+
+/* Buttons feel clickable */
+#top button {
+  font-weight: 500;
+}
+
+/* Dropdowns feel selectable */
+#top select {
+  padding-right: 14px;       /* space for arrow */
+  position: relative;
+  font-weight: 400;
+}
+
+/* Subtle dropdown indicator */
+#top select::after {
+  content: "▾";
+  position: absolute;
+  right: 4px;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* Remove native arrows */
+#top select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: none;
+}
+
+/* Focus state (keyboard friendly) */
+#top button:focus-visible,
+#top select:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+/* Layout areas */
+#editor { height: 55%; }
+#terminal { height: 30%; }
+#output {
+  height: 15%;
+  background: #111;
+  padding: 8px;
+}
+/* Make toolbar text slightly smaller & tighter */
+#top {
+  font-size: 11.5px;
+  letter-spacing: 0.2px;
+}
+
+/* Buttons: slightly bolder = clickable */
+#top button {
+  font-weight: 500;
+}
+
+/* Dropdowns: slightly dimmer + arrow hint */
+#top select {
+  font-weight: 400;
+  opacity: 0.75;
+  padding-right: 16px;
+}
+
+/* Arrow hint for dropdowns (pure CSS, no border) */
+#top select {
+  background-image: linear-gradient(45deg, transparent 50%, #888 50%),
+                    linear-gradient(135deg, #888 50%, transparent 50%);
+  background-position: calc(100% - 9px) 55%, calc(100% - 4px) 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+/* Hover clarity */
+#top button:hover {
+  opacity: 1;
+}
+
+#top select:hover {
+  opacity: 0.95;
+}
+
+/* Active feedback (mouse down) */
+#top button:active,
+#top select:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="top">
+  <select id="lang" style="background-color: transparent;">
+    <option value="javascript">JS</option>
+    <option value="python">Python</option>
+    <option value="c">C</option>
+    <option value="cpp">C++</option>
+  </select>
+  <select id="cAction" style="display:none ; background-color: transparent;">
+    <option value="compile" style="background-color: transparent;">Compile</option>
+    <option value="run" style="background-color: transparent;">Run (last exe)</option>
+    <option value="compile-run" style="background-color: transparent;">Compile & Run</option>
+  </select>
+  <select id="exampleSelect" style="background-color: transparent;"></select>
+  <button id="loadExample" style="background-color: transparent;">Load Example</button>
+  <button id="run" style="background-color: transparent;">▶ Run</button>
+  <button id="saveTerm" style="background-color: transparent;">💾 Save Terminal</button>
+  <button id="stopTerm" style="background-color: transparent;">⏹ Stop Terminal</button>
+  <button id="saveFile" style="background-color: transparent;">💾 Save File</button>
+  <button id="openFile" style="background-color: transparent;">📂 Open</button>
+</div>
+
+<div id="editor"></div>
+<!-- output box removed: terminal is the single output surface -->
+<div id="terminal"></div>
+
+<link rel="stylesheet" href="./node_modules/xterm/css/xterm.css">
+<script src="./node_modules/xterm/lib/xterm.js"></script>
+<script src="./node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+<script src="./monaco/vs/loader.js"></script>
+<script>
+require.config({ paths:{vs:"./monaco/vs"} });
+
+// global reference to language select used by runCode
+const lang = document.getElementById('lang');
+
+let editor;
+require(["vs/editor/editor.main"],()=>{
+  editor = monaco.editor.create(
+    document.getElementById("editor"),
+    {
+      value:'console.log("Ctrl+Enter to run");',
+      language:"javascript",
+      theme:"vs-dark",
+      automaticLayout:true
+    }
+  );
+
+  editor.addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+    runCode
+  );
+
+  // examples per language (loop, array iteration, user-defined function)
+ const examples = {
+
+    cpp: [
+    {
+      name: "Hello World",
+      code: `#include <iostream>
+
+int main() {
+    std::cout << "Hello, World!" << std::endl;
+    return 0;
+}`
+    },
+    {
+      name: "Loop Vector",
+      code: `#include <iostream>
+#include <vector>
+
+int main() {
+    std::vector<int> v = {1,2,3,4};
+    for (int x : v) std::cout << x << "\\n";
+    return 0;
+}`
+    },
+    {
+      name: "Sum Function",
+      code: `#include <iostream>
+#include <vector>
+
+int sum(const std::vector<int>& v){
+    int s = 0;
+    for (int x : v) s += x;
+    return s;
+}
+
+int main(){
+    std::cout << sum({1,2,3,4}) << "\\n";
+    return 0;
+}`
+    },
+    {
+      name: "User Input",
+      code: `#include <iostream>
+#include <string>
+
+int main(){
+    std::string name;
+    std::cout << "Enter your name: ";
+    if (!std::getline(std::cin, name)) return 0;
+    std::cout << "Hello, " << name << "\\n";
+    return 0;
+}`
+    }
+  ],
+
+  javascript: [
+    {
+      name: "Hello World",
+      code: `print("Hello, World!");`
+    },
+    {
+      name: "Loop Array",
+      code: `const arr = [1, 2, 3, 4];
+
+for (const x of arr) {
+  print(x);
+}`
+    },
+    {
+      name: "Sum Function",
+      code: `function sumArray(arr) {
+  let total = 0;
+  for (const x of arr) {
+    total += x;
+  }
+  return total;
+}
+
+print(sumArray([1, 2, 3, 4]));`
+    },
+    {
+      name: "User Input",
+      code: `import * as std from "std";
+
+std.out.puts("Enter your name: ");
+const name = std.in.getline();
+
+print("Hello, " + name);`
+    }
+  ],
+
+  python: [
+    {
+      name: "Hello World",
+      code: `print("Hello, World!")`
+    },
+    {
+      name: "Loop List",
+      code: `arr = [1, 2, 3, 4]
+
+for x in arr:
+    print(x)`
+    },
+    {
+      name: "Sum Function",
+      code: `def sum_list(arr):
+    total = 0
+    for x in arr:
+        total += x
+    return total
+
+print(sum_list([1, 2, 3, 4]))`
+    },
+    {
+      name: "User Input",
+      code: `name = input("Enter your name: ")
+print("Hello, " + name)`
+    }
+  ],
+
+  c: [
+    {
+      name: "Hello World",
+      code: `#include <stdio.h>
+
+int main(void) {
+    printf("Hello, World!\\n");
+    return 0;
+}`
+    },
+    {
+      name: "Loop Array",
+      code: `#include <stdio.h>
+
+int main(void) {
+    int arr[] = {1, 2, 3, 4};
+    int size = sizeof(arr) / sizeof(arr[0]);
+
+    for (int i = 0; i < size; i++) {
+        printf("%d\\n", arr[i]);
+    }
+
+    return 0;
+}`
+    },
+    {
+      name: "Sum Function",
+      code: `#include <stdio.h>
+
+int sum(int arr[], int n) {
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        total += arr[i];
+    }
+    return total;
+}
+
+int main(void) {
+    int arr[] = {1, 2, 3, 4};
+    int size = sizeof(arr) / sizeof(arr[0]);
+
+    printf("Sum = %d\\n", sum(arr, size));
+    return 0;
+}`
+    },
+    {
+      name: "User Input",
+      code: `#include <stdio.h>
+
+int main(void) {
+    int x;
+    printf("Enter a number: ");
+    scanf("%d", &x);
+    printf("You entered %d\\n", x);
+    return 0;
+}`
+    }
+  ]
+};
+
+  const cAction = document.getElementById('cAction');
+  const exampleSelect = document.getElementById('exampleSelect');
+  const loadExampleBtn = document.getElementById('loadExample');
+
+  function populateExamples(langKey){
+    exampleSelect.innerHTML = '';
+    const list = examples[langKey] || [];
+    list.forEach((ex, idx) => {
+      const opt = document.createElement('option');
+      opt.value = idx;
+      opt.textContent = ex.name;
+      exampleSelect.appendChild(opt);
+    });
+  }
+
+  // show/hide compile action when C selected
+  lang.addEventListener('change', () => {
+    if (lang.value === 'c'||lang.value === 'cpp') {
+      cAction.style.display = '';
+    } else {
+      cAction.style.display = 'none';
+    }
+    populateExamples(lang.value);
+    try { monaco.editor.setModelLanguage(editor.getModel(), lang.value === 'javascript' ? 'javascript' : (lang.value === 'python' ? 'python' : (lang.value === 'c' ? 'c' : 'cpp'))); } catch(e) {}
+  });
+
+  loadExampleBtn.addEventListener('click', () => {
+    const idx = parseInt(exampleSelect.value||0,10);
+    const list = examples[lang.value] || [];
+    if (list[idx]) editor.setValue(list[idx].code);
+  });
+
+  // initialize examples for default language
+  populateExamples(lang.value);
+
+  // Ensure DOM elements referenced by scripts
+  document.getElementById('run').onclick = runCode;
+
+  // Save file: use non-silent save by default so user can choose path
+  // Single Save: open Save dialog immediately and suggest a filename (like terminal save)
+  document.getElementById('saveFile').onclick = async () => {
+    const defaultName = (lang.value === 'python') ? 'main.py' : (lang.value === 'c') ? 'main.c' : (lang.value === 'cpp') ? 'main.cpp' : 'main.js';
+    const res = await window.api.saveFile(defaultName, editor.getValue());
+    if (!res) return alert('Save failed');
+    if (typeof res === 'string' && res.startsWith('Error')) return alert(res);
+    if (res === 'cancelled') return; // user cancelled dialog
+    alert('Saved to: ' + res);
+  };
+
+  document.getElementById('openFile').onclick = async () => {
+    const res = await window.api.openFile(null);
+    if (!res) return alert('Open failed');
+    if (typeof res === 'string' && res.startsWith('Error')) return alert(res);
+    if (res === 'cancelled') return; // user cancelled dialog
+    // expecting { path, content }
+    editor.setValue(res.content || '');
+    alert('Opened: ' + (res.path || 'unspecified'));
+  };
+  
+  // Build/run flow for compiled languages (respects cAction)
+  let lastExe = null;
+  document.getElementById('run').onclick = async () => {
+    if (lang.value === 'c'||lang.value === 'cpp') {
+      const action = cAction.value;
+      if (action === 'compile' || action === 'compile-run') {
+          // output.textContent = 'Building...'; // Removed as per patch intent
+        const res = await window.api.run(lang.value, editor.getValue(), { runInTerminal: true, action });
+        if (!res) return alert('Build failed');
+        if (typeof res === 'string' && res.startsWith('Error')) return alert(res);
+        if (res.compiled) {
+          lastExe = res.exe; 
+          console.log('Compiled: ' + res.exe); // Changed to log instead of output
+          if (action === 'compile-run') {
+            // run in integrated terminal if available, otherwise external console
+            try {
+              await window.api.terminalStart();
+              window.api.terminalWrite(res.exe + '\r');
+                // alert('Program started in integrated terminal.'); // Removed as per patch intent
+            } catch (e) {
+              await window.api.runExe(lastExe);
+                // alert('Program started in external console.'); // Removed as per patch intent
+            }
+          } else {
+            console.log('Compiled to: ' + res.exe); // Changed to log instead of alert
+          }
+        } else {
+          console.log(JSON.stringify(res)); // Changed to log instead of output
+        }
+      } else if (action === 'run') {
+        if (!lastExe) return console.log('No compiled exe found. Build first.'); // Changed to log instead of alert
+        try {
+          await window.api.terminalStart();
+          window.api.terminalWrite(lastExe + '\r');
+          // alert('Program started in integrated terminal.'); // Removed as per patch intent
+        } catch (e) {
+          await window.api.runExe(lastExe);
+          // alert('Program started in external console.'); // Removed as per patch intent
+        }
+      }
+      return;
+    }
+    // fallback for interpreted languages: run in integrated terminal if possible
+    const res = await window.api.run(lang.value, editor.getValue(), { runInTerminal: true });
+    if (res && res.runCommand) {
+        try {
+          await window.api.terminalStart();
+          window.api.terminalWrite(res.runCommand + '\r');
+          // alert('Program started in integrated terminal.'); // Removed as per patch intent
+      } catch (e) {
+        // fallback to legacy exec behavior
+        output.textContent = 'Running...';
+        output.textContent = await window.api.run(lang.value, editor.getValue());
+      }
+    } else {
+      console.log(String(res)); // Changed to log instead of output
+    }
+  };
+
+  // Run EXE button removed; Run handles compile/run actions
+});
+
+async function runCode(){
+  // Use integrated terminal when possible
+  const res = await window.api.run(lang.value, editor.getValue(), { runInTerminal: true });
+  if (res && res.runCommand) {
+    try {
+      await window.api.terminalStart();
+      window.api.terminalWrite(res.runCommand + '\r');
+      alert('Program started in integrated terminal.');
+      return;
+    } catch (e) {}
+  }
+  console.log('Running...');
+  console.log(await window.api.run(lang.value, editor.getValue())); // Changed to log instead of output
+}
+
+// run button is bound after editor initialization
+
+/* Prefer xterm.js if available (better ANSI support), otherwise fallback */
+let xtermAvailable = typeof Terminal !== 'undefined' && typeof FitAddon !== 'undefined';
+if (xtermAvailable) {
+  const term = new Terminal({cursorBlink:true});
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('terminal'));
+  fit.fit();
+
+  window.api.terminalStart();
+  const offData = window.api.onTerminalData(d => term.write(d));
+    // try { output.textContent += d; output.scrollTop = output.scrollHeight; } catch(e) {} // Removed as per patch intent
+
+    term.onData(d => {
+      window.api.terminalWrite(d);
+    });
+
+  document.getElementById('saveTerm').onclick = async () => {
+    const res = await window.api.terminalSave(null);
+    console.log('terminalSave ->', res);
+  };
+  document.getElementById('stopTerm').onclick = async () => {
+    const res = await window.api.terminalStop();
+    console.log('terminalStop ->', res);
+  };
+  // (saveFile handler created after editor is initialized)
+
+} else {
+  // Fallback simple terminal using ipc
+  const termEl = document.getElementById("terminal");
+  termEl.style.overflow = 'auto';
+  termEl.style.whiteSpace = 'pre-wrap';
+  termEl.style.background = '#000';
+  termEl.style.color = '#0f0';
+  termEl.tabIndex = 0;
+  termEl.textContent = '';
+
+  function writeToTerm(d){
+    const txt = sanitizeAnsi(String(d));
+    termEl.textContent += txt;
+    termEl.scrollTop = termEl.scrollHeight;
+    // try { output.textContent += txt; output.scrollTop = output.scrollHeight; } catch(e) {} // Removed as per patch intent
+  }
+
+  window.api.terminalStart();
+  const off = window.api.onTerminalData(d => writeToTerm(d));
+
+  termEl.addEventListener('keydown', e => {
+    let data = '';
+    if (e.ctrlKey && (e.key === 'c' || e.key === 'C')) data = '\x03';
+    else if (e.key === 'Enter') data = '\r';
+    else if (e.key === 'Backspace') data = '\x7f';
+    else if (e.key === 'Tab') data = '\t';
+    else if (e.key === 'ArrowUp') data = '\x1b[A';
+    else if (e.key === 'ArrowDown') data = '\x1b[B';
+    else if (e.key === 'ArrowRight') data = '\x1b[C';
+    else if (e.key === 'ArrowLeft') data = '\x1b[D';
+    else if (e.key.length === 1) {
+      if (e.ctrlKey) {
+        const ch = e.key.toUpperCase();
+        if (ch >= 'A' && ch <= 'Z') data = String.fromCharCode(ch.charCodeAt(0) - 64);
+      } else {
+        data = e.key;
+      }
+    }
+    if (data) { window.api.terminalWrite(data); e.preventDefault(); }
+  });
+  termEl.addEventListener('paste', e => {
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    if (text) { window.api.terminalWrite(text); e.preventDefault(); }
+  });
+  termEl.addEventListener('focus', () => { /* keep focus for keyboard input */ });
+  termEl.focus();
+
+  document.getElementById('saveTerm').onclick = async () => {
+    const res = await window.api.terminalSave(null);
+    console.log('terminalSave ->', res);
+  };
+  document.getElementById('stopTerm').onclick = async () => {
+    const res = await window.api.terminalStop();
+    console.log('terminalStop ->', res);
+  };
+
+  function sanitizeAnsi(s){
+    // remove ANSI CSI sequences like \x1b[31m and similar
+    s = s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+    // remove other escape sequences
+    s = s.replace(/\x1b\][^\x07]*\x07/g, '');
+    // handle backspace: remove previous char
+    while (s.indexOf('\b') !== -1){
+      const i = s.indexOf('\b');
+      if (i>0) s = s.slice(0,i-1) + s.slice(i+1);
+      else s = s.slice(i+1);
+    }
+    // normalize CR
+    s = s.replace('\r', '\n');
+    return s;
+  }
+}
+</script>
+
+</body>
+</html>
