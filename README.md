@@ -16,21 +16,20 @@ In educational environments, setting up multiple languages on every system is ti
 
 🧑‍🎓 Education-first design – ideal for school labs and beginners
 
-🖥️ Built with Electron – cross-platform (Windows, Linux, macOS)
+🖥️ Built with Electron – cross-platform (Windows)
 
 📦 Preinstalled popular languages:
 
 Python
 
-C / C++
+C 
 
-Java
+python 
 
 JavaScript
 
-(more coming soon)
+(more coming soon){c++,and more}
 
-📴 Offline support – works without internet after installation
 
 🎨 Clean & simple UI – distraction-free learning environment
 
