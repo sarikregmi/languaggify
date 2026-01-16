@@ -1,0 +1,10 @@
+# Node / Electron
+node_modules/
+dist/
+build/
+out/
+
+# Env & cache
+.env
+.cache/
+.vscode/
