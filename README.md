@@ -1,4 +1,4 @@
-#Languaggify ⚡
+Languaggify ⚡
 
 A pre-configured, school-ready IDE built with Electron
 
